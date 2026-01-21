@@ -15,4 +15,7 @@ YELLOW_HUE_RANGE = (40, 70)      # Желтый диапазон
 GREEN_HUE_RANGE = (80, 140)      # Зеленый диапазон
 
 # Настройки вывода
-OUTPUT_FILENAME = "suspicious_transactions_report.xlsx"
+OUTPUT_FILENAME = "miss.xlsx"
+
+# Режим вывода: 'single' (один лист) или 'multiple' (по файлам)
+DEFAULT_OUTPUT_MODE = 'multiple'

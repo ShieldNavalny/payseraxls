@@ -8,9 +8,29 @@ class PDFParser:
     def __init__(self):
         self.transactions = []
     
+    def _extract_month_year_from_filename(self, filename: str) -> str:
+        """
+        Извлекает месяц и год из имени файла
+        EVP0510014895802_2025-01-01_2025-01-31- truksta dok -> 01_2025
+        """
+        # Ищем паттерн ГГГГ-ММ-ДД
+        match = re.search(r'(\d{4})-(\d{2})-\d{2}', filename)
+        
+        if match:
+            year = match.group(1)
+            month = match.group(2)
+            return f"{month}_{year}"
+        
+        # Fallback: если не нашли дату, возвращаем первые 30 символов
+        return filename[:30]
+
     def extract_colored_text(self, pdf_path: str) -> List[Dict]:
         """Извлекает транзакции с желтым Highlight"""
         transactions = []
+
+        # Получаем имя файла для group by
+        file_name_full = Path(pdf_path).stem
+        file_name = self._extract_month_year_from_filename(file_name_full)
         
         try:
             yellow_rects = self._get_yellow_highlights(pdf_path)
@@ -41,6 +61,7 @@ class PDFParser:
                                 row, page_num, table, row_idx
                             )
                             if transaction:
+                                transaction['source_file'] = file_name 
                                 transactions.append(transaction)
         
         except Exception as e:

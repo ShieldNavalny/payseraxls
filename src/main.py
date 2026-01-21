@@ -1,10 +1,10 @@
 from pathlib import Path
 from src.pdf_parser import PDFParser
 from src.excel_writer import ExcelWriter
-from config import INPUT_DIR, OUTPUT_DIR, OUTPUT_FILENAME
+from config import INPUT_DIR, OUTPUT_DIR, OUTPUT_FILENAME, DEFAULT_OUTPUT_MODE
 
 def main():
-    print("🔍 Paysera PDF Analyzer v3.1")
+    print("🔍 Paysera PDF Analyzer v4.0")
     print("=" * 50)
     
     if not INPUT_DIR.exists():
@@ -19,6 +19,22 @@ def main():
     
     print(f"📄 Файлов: {len(pdf_files)}")
     
+    # ВЫБОР РЕЖИМА
+    print("\nВыберите режим вывода:")
+    print("  1. Один лист для всех файлов")
+    print("  2. Отдельные листы для каждого файла (по умолчанию)")
+    
+    choice = input("\nВведите 1 или 2 (Enter = 2): ").strip()
+    
+    if choice == '1':
+        mode = 'single'
+    else:
+        mode = 'multiple'
+    
+    print(f"Режим: {'один лист' if mode == 'single' else 'разделение по файлам'}")
+    print("=" * 50)
+    
+    # Парсинг
     parser = PDFParser()
     transactions = parser.process_directory(str(INPUT_DIR))
     
@@ -30,15 +46,26 @@ def main():
     negative = sum(1 for t in transactions if t['amount'].startswith('-'))
     positive = len(transactions) - negative
     
-    print(f"\n✓ Найдено: {len(transactions)}")
-    print(f"   - Красные (расходы): {negative}")
-    print(f"   - Фиолетовые (возвраты): {positive}")
+    # Подсчет сумм
+    expenses_total = sum(
+        float(t['amount'].replace(' EUR', '').replace(',', '.'))
+        for t in transactions if t['amount'].startswith('-')
+    )
+    returns_total = sum(
+        float(t['amount'].replace(' EUR', '').replace(',', '.'))
+        for t in transactions if not t['amount'].startswith('-')
+    )
     
+    print(f"\n✓ Найдено: {len(transactions)}")
+    print(f"   - Красные (расходы): {negative} транзакций на {expenses_total:.2f} EUR")
+    print(f"   - Фиолетовые (возвраты): {positive} транзакций на {returns_total:.2f} EUR")
+    
+    # Excel
     excel_writer = ExcelWriter()
     output_file = OUTPUT_DIR / OUTPUT_FILENAME
     
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    excel_writer.write_transactions(transactions, str(output_file))
+    excel_writer.write_transactions(transactions, str(output_file), mode)
     
     print("=" * 50)
     print("✓ Готово!")
