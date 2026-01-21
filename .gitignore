@@ -1,3 +1,16 @@
+#internal
+
+input_pdfs/*.pdf
+!input_pdfs/.gitkeep
+
+output_reports/*.xlsx
+!output_reports/.gitkeep
+
+
+.vscode
+.idea
+*.swp
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
