@@ -4,40 +4,36 @@ from src.excel_writer import ExcelWriter
 from config import INPUT_DIR, OUTPUT_DIR, OUTPUT_FILENAME
 
 def main():
-    print("🔍 Paysera PDF Analyzer v1.0")
+    print("🔍 Paysera PDF Analyzer v3.1")
     print("=" * 50)
     
-    # Проверяем наличие входной папки
     if not INPUT_DIR.exists():
         INPUT_DIR.mkdir(parents=True)
-        print(f"✗ Папка {INPUT_DIR} создана. Поместите PDF файлы туда.")
+        print(f"✗ Папка {INPUT_DIR} создана")
         return
     
     pdf_files = list(INPUT_DIR.glob('*.pdf'))
     if not pdf_files:
-        print(f"✗ Нет PDF файлов в {INPUT_DIR}")
+        print(f"✗ Нет PDF в {INPUT_DIR}")
         return
     
-    print(f"📄 Найдено файлов: {len(pdf_files)}")
+    print(f"📄 Файлов: {len(pdf_files)}")
     
-    # Парсим PDF
     parser = PDFParser()
     transactions = parser.process_directory(str(INPUT_DIR))
     
     if not transactions:
-        print("✗ Не найдено проблемных транзакций")
+        print("✗ Не найдено транзакций")
         return
     
-    print(f"⚠️  Найдено проблемных транзакций: {len(transactions)}")
-    
     # Статистика
-    yellow_count = sum(1 for t in transactions if t['color_type'] == 'yellow')
-    green_count = sum(1 for t in transactions if t['color_type'] == 'green')
+    negative = sum(1 for t in transactions if t['amount'].startswith('-'))
+    positive = len(transactions) - negative
     
-    print(f"   - Красные (недостаток счетов): {yellow_count}")
-    print(f"   - Фиолетовые (возвраты без документов): {green_count}")
+    print(f"\n✓ Найдено: {len(transactions)}")
+    print(f"   - Красные (расходы): {negative}")
+    print(f"   - Фиолетовые (возвраты): {positive}")
     
-    # Создаем Excel
     excel_writer = ExcelWriter()
     output_file = OUTPUT_DIR / OUTPUT_FILENAME
     
@@ -45,7 +41,7 @@ def main():
     excel_writer.write_transactions(transactions, str(output_file))
     
     print("=" * 50)
-    print("✓ Обработка завершена!")
+    print("✓ Готово!")
 
 if __name__ == '__main__':
     main()

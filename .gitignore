@@ -6,6 +6,7 @@ input_pdfs/*.pdf
 output_reports/*.xlsx
 !output_reports/.gitkeep
 
+tests/*.pdf
 
 .vscode
 .idea
