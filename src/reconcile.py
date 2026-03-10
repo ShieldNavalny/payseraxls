@@ -2,15 +2,11 @@
 reconcile.py — сравнение XLS-вывода с CSV-реестром счетов.
 
 Логика:
-  1. Читает CSV из корня рабочей директории (documents.csv по умолчанию).
-  2. Читает XLSX из output_reports/.
-  3. Строит ключи (дата, canonical_vendor, |сумма|) для обеих сторон.
-     - XLS «Получатель» нормализуется через VENDOR_MAP.
-     - CSV «Vendor» тоже нормализуется через тот же VENDOR_MAP.
-     - Суммы в CSV всегда положительные; в XLS могут быть отрицательными — берём |abs|.
-  4. Находит записи из CSV, которых НЕТ в XLS (только расходы — отрицательные в XLS).
-  5. Копирует недостающие PDF в missing_invoices/<Vendor>/
-  6. Создаёт аннотированный XLS в missing_invoices/ с зелёными строками для найденных.
+  1. --csv принимает полный путь. Папка CSV становится base_dir для PDF.
+  2. --xls принимает полный путь.
+  3. --out папка для вывода: если относительный — относительно cwd; если абсолютный — как есть.
+  4. PDF-файлы ищутся относительно папки CSV (base_dir).
+  5. Создаёт reconciliation_report.xlsx в --out с зелёными строками для найденных.
 """
 
 import csv
@@ -22,10 +18,7 @@ from typing import List, Dict, Set, Tuple, Optional
 import openpyxl
 from openpyxl.styles import PatternFill
 
-from config import OUTPUT_DIR, OUTPUT_FILENAME
-
 # ─── настройки ────────────────────────────────────────────────────────────────
-DEFAULT_CSV_NAME = "documents.csv"
 MISSING_DIR_NAME = "missing_invoices"
 REPORT_XLS_NAME = "reconciliation_report.xlsx"
 
@@ -45,6 +38,7 @@ VENDOR_MAP: List[Tuple[str, str]] = [
     ("eurocash",              "eurocash1.lt"),
     ("pirkeu",                "pirkeu.lt"),
     ("sandeliukunuoma",       "sandeliukunuoma.lt"),
+    ("wolt",                  "wolt"),
 ]
 
 
@@ -82,10 +76,10 @@ def _make_key(date: str, vendor: str, amount: str) -> Tuple[str, str, str]:
     )
 
 
-# ─── чтение XLS — расходные ключи ─────────────────────────────────────────────
+# ─── чтение XLS ───────────────────────────────────────────────────────────────
 
 def load_xls_keys(xls_path: Path) -> Set[Tuple[str, str, str]]:
-    """Берём только расходы (amount < 0)."""
+    """Собирает ключи только расходных транзакций (amount < 0)."""
     keys: Set[Tuple[str, str, str]] = set()
     wb = openpyxl.load_workbook(xls_path, data_only=True)
 
@@ -107,11 +101,7 @@ def load_xls_keys(xls_path: Path) -> Set[Tuple[str, str, str]]:
             if amount_float >= 0:
                 continue
 
-            keys.add(_make_key(
-                str(date_val),
-                str(vendor_val),
-                str(amount_val),
-            ))
+            keys.add(_make_key(str(date_val), str(vendor_val), str(amount_val)))
 
     wb.close()
     return keys
@@ -135,17 +125,14 @@ def load_csv_records(csv_path: Path) -> List[Dict]:
     return records
 
 
-# ─── CSV ключи — те, что есть в реестре ──────────────────────────────────────────
-
 def build_csv_keys(csv_records: List[Dict]) -> Set[Tuple[str, str, str]]:
-    """Строим набор ключей из CSV (дата, vendor, amount)."""
     keys: Set[Tuple[str, str, str]] = set()
     for rec in csv_records:
         keys.add(_make_key(rec['date'], rec['vendor'], rec['amount']))
     return keys
 
 
-# ─── аннотирование XLS — зелёные строки для найденных ────────────────────────────
+# ─── аннотированный XLS ─────────────────────────────────────────────────────────
 
 def create_annotated_xls(
     original_xls: Path,
@@ -153,8 +140,7 @@ def create_annotated_xls(
     output_xls: Path,
 ) -> None:
     """
-    Копирует оригинальный XLS, красит строки, для которых нашлись счета в CSV,
-    в зелёный цвет. Остальные остаются красными/фиолетовыми.
+    Копирует XLS и красит зелёным строки, для которых нашлись счета.
     """
     wb = openpyxl.load_workbook(original_xls)
     green_fill = PatternFill(start_color="FF00FF00", end_color="FF00FF00", fill_type="solid")
@@ -164,19 +150,14 @@ def create_annotated_xls(
             continue
         ws = wb[sheet_name]
 
-        for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
-            date_cell = row[0]
-            vendor_cell = row[1]
-            amount_cell = row[2]
-
-            date_val = date_cell.value
-            vendor_val = vendor_cell.value
-            amount_val = amount_cell.value
+        for row in ws.iter_rows(min_row=2):
+            date_val = row[0].value
+            vendor_val = row[1].value
+            amount_val = row[2].value
 
             if not date_val or amount_val is None or not vendor_val:
                 continue
 
-            # Проверяем, что это расход (< 0)
             amount_str = str(amount_val).replace(' EUR', '').replace(',', '.').strip()
             try:
                 amount_float = float(amount_str)
@@ -184,11 +165,10 @@ def create_annotated_xls(
                 continue
 
             if amount_float >= 0:
-                continue  # возвраты не красим
+                continue
 
             key = _make_key(str(date_val), str(vendor_val), str(amount_val))
             if key in csv_keys:
-                # Найден счёт — красим строку в зелёный
                 for cell in row:
                     cell.fill = green_fill
 
@@ -200,35 +180,29 @@ def create_annotated_xls(
 # ─── основная функция ─────────────────────────────────────────────────────────
 
 def reconcile(
-    base_dir: Optional[Path] = None,
-    csv_name: str = DEFAULT_CSV_NAME,
-    xls_name: Optional[str] = None,
-    missing_dir_name: str = MISSING_DIR_NAME,
+    csv_path: Path,
+    xls_path: Path,
+    out_dir: Path,
     dry_run: bool = False,
 ) -> List[Dict]:
     """
-    Запускает сверку.
-
-    :param base_dir:         корневая директория (по умолчанию — cwd).
-    :param csv_name:         имя CSV-файла в base_dir.
-    :param xls_name:         имя XLS-файла (по умолчанию из config.py).
-    :param missing_dir_name: имя выходной директории.
-    :param dry_run:          если True — только вычисляет, не копирует.
-    :return:                 список недостающих записей.
+    :param csv_path:  полный путь к CSV. Его папка — base_dir для PDF.
+    :param xls_path:  полный путь к XLS.
+    :param out_dir:   куда копировать PDF и отчёт.
+    :param dry_run:   только статистика, без копирования.
     """
-    if base_dir is None:
-        base_dir = Path.cwd()
+    # PDF ищем относительно папки CSV
+    base_dir = csv_path.parent.resolve()
 
-    csv_path = base_dir / csv_name
+    print(f"📂 CSV:      {csv_path}")
+    print(f"📊 XLS:      {xls_path}")
+    print(f"📁 PDF база:  {base_dir}")
+    print(f"📄 Вывод:    {out_dir}")
+
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV не найден: {csv_path}")
-
-    xls_path = OUTPUT_DIR / (xls_name or OUTPUT_FILENAME)
     if not xls_path.exists():
         raise FileNotFoundError(f"XLS не найден: {xls_path}")
-
-    print(f"📂 CSV:  {csv_path}")
-    print(f"📊 XLS:  {xls_path}")
 
     xls_keys = load_xls_keys(xls_path)
     print(f"   XLS расходных транзакций: {len(xls_keys)}")
@@ -237,13 +211,8 @@ def reconcile(
     print(f"   CSV записей:              {len(csv_records)}")
 
     csv_keys = build_csv_keys(csv_records)
-    print(f"   CSV уникальных ключей:       {len(csv_keys)}")
 
-    # ── находим недостающие (транзакции XLS, которых НЕТ в CSV) ────────────────────
-    # Логика: xls_keys — расходы в выписке, csv_keys — счета.
-    # missing = xls_keys - csv_keys (но мы хотим полные записи, поэтому итерируем по csv_records)
-    # Нет, наоборот: нам нужны записи из CSV, которых НЕТ в XLS
-    # — это счета, которые не соответствуют транзакциям.
+    # ── находим записи из CSV, которых НЕТ в XLS ─────────────────────────────
     missing: List[Dict] = []
     for rec in csv_records:
         key = _make_key(rec['date'], rec['vendor'], rec['amount'])
@@ -252,24 +221,14 @@ def reconcile(
 
     matched_count = len(csv_records) - len(missing)
     print(f"\n✓ Найдено счетов:    {matched_count} / {len(csv_records)}")
-    print(f"🔍 Недостающих счетов: {len(missing)}")
+    print(f"🔍 Недостающих: {len(missing)}")
 
-    if not missing:
-        print("✓ Всё совпадает — расхождений нет.")
-        # Всё равно создаём аннотированный XLS
-        out_root = base_dir / missing_dir_name
-        report_path = out_root / REPORT_XLS_NAME
-        create_annotated_xls(xls_path, csv_keys, report_path)
-        print(f"📄 Аннотированный XLS: {report_path}")
-        return missing
-
-    # ── группируем по вендору ───────────────────────────────────────────────────
-    by_vendor: Dict[str, List[Dict]] = {}
-    for rec in missing:
-        by_vendor.setdefault(rec['vendor'], []).append(rec)
-
-    for vendor, recs in sorted(by_vendor.items()):
-        print(f"   {vendor}: {len(recs)} шт.")
+    if missing:
+        by_vendor: Dict[str, List[Dict]] = {}
+        for rec in missing:
+            by_vendor.setdefault(rec['vendor'], []).append(rec)
+        for vendor, recs in sorted(by_vendor.items()):
+            print(f"   {vendor}: {len(recs)} шт.")
 
     if dry_run:
         print("\n⚠  Режим dry-run: файлы не скопированы.")
@@ -277,41 +236,42 @@ def reconcile(
         return missing
 
     # ── копируем PDF ──────────────────────────────────────────────────────────
-    out_root = base_dir / missing_dir_name
-    copied = 0
-    not_found = 0
+    if missing:
+        print(f"\n📁 Копируем PDF в: {out_dir}")
+        copied = 0
+        not_found = 0
 
-    print(f"\n📁 Копируем в: {out_root}")
+        for rec in missing:
+            if not rec['file']:
+                print(f"   ⚠ Нет пути: {rec['vendor']} {rec['date']}")
+                continue
 
-    for rec in missing:
-        if not rec['file']:
-            print(f"   ⚠ Нет пути к файлу для: {rec['vendor']} {rec['date']} {rec['amount']}")
-            continue
+            # PDF относительно папки CSV
+            src = base_dir / rec['file']
+            if not src.exists():
+                print(f"   ⚠ Не найден: {src}")
+                not_found += 1
+                continue
 
-        src = base_dir / rec['file']
-        if not src.exists():
-            print(f"   ⚠ Не найден файл: {src}")
-            not_found += 1
-            continue
+            vendor_safe = re.sub(r'[\\/:*?"<>|]', '_', rec['vendor'])
+            dst_dir = out_dir / vendor_safe
+            dst_dir.mkdir(parents=True, exist_ok=True)
 
-        vendor_safe = re.sub(r'[\\/:*?"<>|]', '_', rec['vendor'])
-        dst_dir = out_root / vendor_safe
-        dst_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst_dir / src.name)
+            copied += 1
 
-        dst = dst_dir / src.name
-        shutil.copy2(src, dst)
-        copied += 1
+        print(f"✓ Скопировано: {copied}")
+        if not_found:
+            print(f"⚠  Не найдено на диске: {not_found}")
+    else:
+        print("✓ Всё совпадает — расхождений нет.")
 
-    print(f"\n✓ Скопировано: {copied}")
-    if not_found:
-        print(f"⚠  Не найдено на диске: {not_found}")
-
-    # ── создаём аннотированный XLS ────────────────────────────────────────────────
-    report_path = out_root / REPORT_XLS_NAME
-    print(f"\n📊 Создаём аннотированный XLS: {report_path}")
+    # ── аннотированный XLS ────────────────────────────────────────────────
+    report_path = out_dir / REPORT_XLS_NAME
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\n📊 Отчёт XLS: {report_path}")
     create_annotated_xls(xls_path, csv_keys, report_path)
-    print("✓ Зелёные строчки — найдены счета")
-    print("  Красные/фиолетовые — нет счетов")
+    print("✓ Зелёные — счёт найден, красные/фиолетовые — нет")
 
     return missing
 
@@ -329,39 +289,50 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Сверка XLS-вывода с CSV-реестром счетов"
+        description="Сверка XLS-вывода с CSV-реестром счетов",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Пример:
+  python -m src.reconcile \\
+    --csv "C:\\INVOICES\\documents.csv" \\
+    --xls "C:\\payseraxls\\output_reports\\miss.xlsx" \\
+    --out  "C:\\INVOICES\\missing_invoices"
+
+  PDF-файлы ищутся относительно папки с CSV.
+"""
     )
     parser.add_argument(
-        '--csv', default=DEFAULT_CSV_NAME,
-        help=f"Имя CSV-файла в корне (по умолчанию: {DEFAULT_CSV_NAME})"
+        '--csv',
+        required=True,
+        help="Полный путь к CSV-файлу. Папка CSV = база для поиска PDF."
     )
     parser.add_argument(
-        '--xls', default=None,
-        help="Имя XLS-файла в output_reports/ (по умолчанию из config.py)"
+        '--xls',
+        required=True,
+        help="Полный путь к XLS/XLSX-файлу с выпиской."
     )
     parser.add_argument(
-        '--out', default=MISSING_DIR_NAME,
-        help=f"Папка для недостающих счетов (по умолчанию: {MISSING_DIR_NAME})"
+        '--out',
+        default=MISSING_DIR_NAME,
+        help=f"Папка для недостающих PDF и отчёта (по умолчанию: {MISSING_DIR_NAME} в cwd)"
     )
     parser.add_argument(
-        '--dry-run', action='store_true',
+        '--dry-run',
+        action='store_true',
         help="Только показать расхождения, не копировать файлы"
-    )
-    parser.add_argument(
-        '--base-dir', default=None,
-        help="Корневая директория (по умолчанию: текущая)"
     )
     args = parser.parse_args()
 
-    base = Path(args.base_dir) if args.base_dir else None
+    csv_path = Path(args.csv).resolve()
+    xls_path = Path(args.xls).resolve()
+    out_dir  = Path(args.out) if Path(args.out).is_absolute() else Path.cwd() / args.out
+    out_dir  = out_dir.resolve()
 
     print("🔄 Payseraxls — Reconcile")
     print("=" * 50)
     reconcile(
-        base_dir=base,
-        csv_name=args.csv,
-        xls_name=args.xls,
-        missing_dir_name=args.out,
+        csv_path=csv_path,
+        xls_path=xls_path,
+        out_dir=out_dir,
         dry_run=args.dry_run,
     )
     print("=" * 50)
