@@ -1,7 +1,13 @@
+import sys
 from pathlib import Path
-from src.pdf_parser import PDFParser
-from src.excel_writer import ExcelWriter
-from src.csv_parser import parse_csv_to_excel
+
+# Allow 'python src/main.py' from project root AND 'python main.py' from src/
+sys.path.insert(0, str(Path(__file__).parent))          # adds src/
+sys.path.insert(0, str(Path(__file__).parent.parent))   # adds project root (for config)
+
+from pdf_parser import PDFParser
+from excel_writer import ExcelWriter
+from csv_parser import parse_csv_to_excel
 from config import INPUT_DIR, OUTPUT_DIR, OUTPUT_FILENAME, DEFAULT_OUTPUT_MODE
 
 def main():
@@ -16,13 +22,12 @@ def main():
 
     # ------------------------------------------------------------------ CSV
     if source_choice == '2':
-        csv_files = list(INPUT_DIR.glob('*.csv')) if INPUT_DIR.exists() else []
-
         if not INPUT_DIR.exists():
             INPUT_DIR.mkdir(parents=True)
             print(f"✗ Папка {INPUT_DIR} создана")
             return
 
+        csv_files = list(INPUT_DIR.glob('*.csv'))
         if not csv_files:
             print(f"✗ Нет CSV-файлов в {INPUT_DIR}")
             return
