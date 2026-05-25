@@ -11,15 +11,18 @@ from openpyxl.utils import get_column_letter
 _RE_NOT_PRESENT = re.compile(r"\bnot present\b", re.IGNORECASE)
 
 def _detect_presence(details: str) -> str:
-    if details and _RE_NOT_PRESENT.search(details):
+    """'not present' | 'present' | None (пустое поле = не карточная покупка)"""
+    if not details or not details.strip():
+        return None
+    if _RE_NOT_PRESENT.search(details):
         return "not present"
     return "present"
 
 # Правила цветов:
-#   is_refund == True           → зелёный (EFDAE7) — возврат
-#   presence == 'present'       → золотой (FFD700) — физическая покупка
-#   остальное (not present / не карточная) → без заливки
-FILL_REFUND  = PatternFill(start_color="EFDAE7", end_color="EFDAE7", fill_type="solid")
+#   is_refund == True          → зелёный (E2EFDA)  — Grąžinimas в Tipas
+#   presence == 'present'      → золотой (FFD700)  — только карточные транзакции
+#   остальное                  → без заливки
+FILL_REFUND  = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
 FILL_PRESENT = PatternFill(start_color="FFD700", end_color="FFD700", fill_type="solid")
 FILL_NONE    = PatternFill(fill_type=None)
 
@@ -33,6 +36,8 @@ def translate_paysera_value(column_name, value):
     if column_name == "Tipas":
         if "Mokėjimo kortelės transakcija" in val_str:
             return "Транзакция по карте"
+        if "Grąžinimas" in val_str:
+            return "Возврат"
         if "Pervedimas" in val_str:
             return "Перевод"
 
@@ -91,9 +96,9 @@ def parse_csv_to_excel(input_csv_path, output_excel_path):
     ws.title = "Выписка Paysera"
     ws.views.sheetView[0].showGridLines = True
 
-    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    data_font   = Font(name="Segoe UI", size=10, color="000000")
+    header_font  = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    header_fill  = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    data_font    = Font(name="Segoe UI", size=10, color="000000")
     expense_font = Font(name="Segoe UI", size=10, color="C00000")
 
     thin_border = Side(border_style="thin", color="D9D9D9")
@@ -117,22 +122,21 @@ def parse_csv_to_excel(input_csv_path, output_excel_path):
         for row in reader:
             row_dict = {csv_headers[i]: val.strip() for i, val in enumerate(row) if i < len(csv_headers)}
 
-            # Возврат: карточная транзакция с плюсовой суммой
-            is_card_trans = "kortelės" in row_dict.get("Tipas", "").lower()
-            is_credit     = row_dict.get("Kreditas / Debetas", "") == "K"
+            tipas     = row_dict.get("Tipas", "")
+            paskirtis = row_dict.get("Paskirtis", "")
             try:
                 amt = float(row_dict.get("Suma ir valiuta", "0"))
             except ValueError:
                 amt = 0.0
-            is_refund = is_card_trans and (is_credit or amt > 0)
 
-            # Present / not present
-            presence = _detect_presence(row_dict.get("Paskirtis", ""))
+            # Рефанд: если в Tipas есть Grąžinimas
+            is_refund = "Grąžinimas" in tipas
 
-            # Выбираем заливку строки:
-            #   возврат              → зелёный
-            #   present покупка       → золотой
-            #   остальное (not present) → без заливки
+            # Презенс: только для карточных транзакций (kortelės в Tipas)
+            is_card  = "kortelės" in tipas.lower()
+            presence = _detect_presence(paskirtis) if is_card else None
+
+            # Заливка строки
             if is_refund:
                 row_fill = FILL_REFUND
             elif presence == "present":
@@ -160,32 +164,31 @@ def parse_csv_to_excel(input_csv_path, output_excel_path):
                 current_key = column_order_keys[col_idx - 1]
 
                 if current_key in ["Išrašo nr.", "Pervedimo nr.", "Kodas", "Įmokos kodas"]:
-                    cell.alignment  = align_center
+                    cell.alignment     = align_center
                     cell.number_format = "@"
-                    cell.font = data_font
+                    cell.font          = data_font
                 elif current_key in ["Data ir laikas", "Kreditas / Debetas", "Valiutos"]:
                     cell.alignment = align_center
-                    cell.font = data_font
+                    cell.font      = data_font
                 elif current_key == "Suma ir valiuta":
-                    cell.alignment = align_right
+                    cell.alignment     = align_right
                     cell.number_format = "#,##0.00"
-                    # Красный шрифт только для отрицательных (не для возвратов)
                     if not is_refund and isinstance(cell.value, (int, float)) and cell.value < 0:
                         cell.font = expense_font
                     else:
                         cell.font = data_font
                 elif current_key == "Likutis":
-                    cell.alignment = align_right
+                    cell.alignment     = align_right
                     cell.number_format = "#,##0.00"
-                    cell.font = data_font
+                    cell.font          = data_font
                 else:
                     cell.alignment = align_left
-                    cell.font = data_font
+                    cell.font      = data_font
 
             row_idx += 1
 
     for col in ws.columns:
-        max_len   = 0
+        max_len    = 0
         col_letter = get_column_letter(col[0].column)
         for cell in col:
             if cell.value:
