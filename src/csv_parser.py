@@ -16,10 +16,10 @@ def _detect_presence(details: str) -> str:
     return "present"
 
 # Правила цветов:
-#   is_refund == True           → зелёный (E2EFDA) — возврат
+#   is_refund == True           → зелёный (EFDAE7) — возврат
 #   presence == 'present'       → золотой (FFD700) — физическая покупка
 #   остальное (not present / не карточная) → без заливки
-FILL_REFUND  = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+FILL_REFUND  = PatternFill(start_color="EFDAE7", end_color="EFDAE7", fill_type="solid")
 FILL_PRESENT = PatternFill(start_color="FFD700", end_color="FFD700", fill_type="solid")
 FILL_NONE    = PatternFill(fill_type=None)
 
