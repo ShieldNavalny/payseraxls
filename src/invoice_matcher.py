@@ -76,7 +76,7 @@ FONT_MATCHED = Font(
 
 # Регексп для извлечения сумм и дат из текста PDF
 _RE_AMOUNT = re.compile(
-    r"(?:EUR|USD|GBP|\$|€|£)?\s*(\d{1,6}[.,]\d{2})(?:\s*(?:EUR|USD|GBP|\$|€|£))?",
+    r"(?:EUR|USD|GBP|\$|\u20ac|\u00a3)?\s*(\d{1,6}[.,]\d{2})(?:\s*(?:EUR|USD|GBP|\$|\u20ac|\u00a3))?",
     re.IGNORECASE,
 )
 _RE_DATE = re.compile(
@@ -291,15 +291,16 @@ def annotate_xls(
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         header_row = [cell.value for cell in ws[1]]
-        if "Счёт (файл)" in header_row:
-            invoice_col = header_row.index("Счёт (файл)") + 1
+        if "\u0421\u0447\u0451\u0442 (\u0444\u0430\u0439\u043b)" in header_row:
+            invoice_col = header_row.index("\u0421\u0447\u0451\u0442 (\u0444\u0430\u0439\u043b)") + 1
         else:
             invoice_col = ws.max_column + 1
-            ws.cell(row=1, column=invoice_col, value="Счёт (файл)")
+            ws.cell(row=1, column=invoice_col, value="\u0421\u0447\u0451\u0442 (\u0444\u0430\u0439\u043b)")
             ws.column_dimensions[get_column_letter(invoice_col)].width = 40
 
         for row_idx, pdf_list in matches.items():
-            file_names = "; ".join(sorted({p.pdf_path.name for p in pdf_list}))
+            # Показываем относительный путь от invoices_dir для читаемости
+            file_names = "; ".join(sorted({str(p.pdf_path.name) for p in pdf_list}))
             row_cells = list(ws.iter_rows(
                 min_row=row_idx, max_row=row_idx,
                 min_col=1, max_col=invoice_col
@@ -312,7 +313,7 @@ def annotate_xls(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(output_path)
     wb.close()
-    print(f"✓ XLS сохранён: {output_path}")
+    print(f"\u2713 XLS \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +335,7 @@ def highlight_pdfs(
     output_dir: Path,
 ) -> None:
     if fitz is None:
-        print("⚠  pymupdf не установлен — подсветка PDF пропущена")
+        print("\u26a0  pymupdf \u043d\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d \u2014 \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u043a\u0430 PDF \u043f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u0430")
         return
 
     pdf_hits: Dict[Path, Dict[int, List[float]]] = {}
@@ -357,7 +358,7 @@ def highlight_pdfs(
         dst = out_pdf_dir / pdf_path.name
         doc.save(dst, garbage=4, deflate=True)
         doc.close()
-        print(f"✓ PDF отмечен: {dst}")
+        print(f"\u2713 PDF \u043e\u0442\u043c\u0435\u0447\u0435\u043d: {dst}")
 
 
 # ---------------------------------------------------------------------------
@@ -369,49 +370,54 @@ def run_matching(
     xls_path: Path,
     output_dir: Path,
 ) -> None:
-    print("🔍 Invoice Matcher")
+    print("\U0001f50d Invoice Matcher")
     print("=" * 50)
     print(f"  PDF:    {invoices_dir}")
     print(f"  XLS:    {xls_path}")
-    print(f"  Вывод:  {output_dir}")
+    print(f"  \u0412\u044b\u0432\u043e\u0434:  {output_dir}")
     print()
 
     if not invoices_dir.exists():
-        print(f"✗ Папка не найдена: {invoices_dir}")
+        print(f"\u2717 \u041f\u0430\u043f\u043a\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430: {invoices_dir}")
         return
     if not xls_path.exists():
-        print(f"✗ XLS не найден: {xls_path}")
+        print(f"\u2717 XLS \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d: {xls_path}")
         return
 
-    xls_rows  = load_xls_rows(xls_path)
-    pdf_files = sorted(invoices_dir.glob("*.pdf"))
-    print(f"✓ XLS: {len(xls_rows)} строк расходов")
-    print(f"✓ PDF: {len(pdf_files)} файлов")
+    xls_rows = load_xls_rows(xls_path)
+
+    # rglob — рекурсивный обход всех подпапок
+    pdf_files = sorted(invoices_dir.rglob("*.pdf"))
+
+    print(f"\u2713 XLS: {len(xls_rows)} \u0441\u0442\u0440\u043e\u043a \u0440\u0430\u0441\u0445\u043e\u0434\u043e\u0432")
+    print(f"\u2713 PDF: {len(pdf_files)} \u0444\u0430\u0439\u043b\u043e\u0432 (\u0440\u0435\u043a\u0443\u0440\u0441\u0438\u0432\u043d\u043e)")
     print()
 
     all_pdf_records: List[PdfRecord] = []
     for pdf_path in pdf_files:
-        print(f"  → читаю {pdf_path.name} ...", end=" ", flush=True)
+        # Показываем путь относительно invoices_dir
+        rel = pdf_path.relative_to(invoices_dir)
+        print(f"  \u2192 \u0447\u0438\u0442\u0430\u044e {rel} ...", end=" ", flush=True)
         try:
             recs = parse_pdf_records(pdf_path)
             all_pdf_records.extend(recs)
-            print(f"{len(recs)} записей")
+            print(f"{len(recs)} \u0437\u0430\u043f\u0438\u0441\u0435\u0439")
         except Exception as e:
-            print(f"⚠ ошибка: {e}")
+            print(f"\u26a0 \u043e\u0448\u0438\u0431\u043a\u0430: {e}")
 
-    print(f"\n✓ Итого записей из PDF: {len(all_pdf_records)}")
+    print(f"\n\u2713 \u0418\u0442\u043e\u0433\u043e \u0437\u0430\u043f\u0438\u0441\u0435\u0439 \u0438\u0437 PDF: {len(all_pdf_records)}")
 
     matches = match_records(xls_rows, all_pdf_records)
-    print(f"✓ Совпадений: {len(matches)} строк XLS")
+    print(f"\u2713 \u0421\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0439: {len(matches)} \u0441\u0442\u0440\u043e\u043a XLS")
 
     out_xls = output_dir / (xls_path.stem + "_matched.xlsx")
     annotate_xls(xls_path, matches, out_xls)
     highlight_pdfs(matches, output_dir)
 
     print("=" * 50)
-    print("✓ Готово!")
-    print(f"  XLS с отметками:  {out_xls}")
-    print(f"  PDF с подсветкой: {output_dir / 'highlighted_pdfs'}")
+    print("\u2713 \u0413\u043e\u0442\u043e\u0432\u043e!")
+    print(f"  XLS \u0441 \u043e\u0442\u043c\u0435\u0442\u043a\u0430\u043c\u0438:  {out_xls}")
+    print(f"  PDF \u0441 \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u043a\u043e\u0439: {output_dir / 'highlighted_pdfs'}")
 
 
 # ---------------------------------------------------------------------------
@@ -421,9 +427,9 @@ def run_matching(
 def main_cli() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="Invoice matcher: PDF vs XLS")
-    parser.add_argument("--invoices", required=True, help="Папка с PDF-счетами")
-    parser.add_argument("--xls",      required=True, help="Путь к XLS/XLSX-файлу")
-    parser.add_argument("--out",      default="output", help="Папка вывода")
+    parser.add_argument("--invoices", required=True, help="\u041f\u0430\u043f\u043a\u0430 \u0441 PDF-\u0441\u0447\u0435\u0442\u0430\u043c\u0438")
+    parser.add_argument("--xls",      required=True, help="\u041f\u0443\u0442\u044c \u043a XLS/XLSX-\u0444\u0430\u0439\u043b\u0443")
+    parser.add_argument("--out",      default="output", help="\u041f\u0430\u043f\u043a\u0430 \u0432\u044b\u0432\u043e\u0434\u0430")
     args = parser.parse_args()
     run_matching(
         invoices_dir=Path(args.invoices).resolve(),
