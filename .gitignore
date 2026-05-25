@@ -1,6 +1,10 @@
 #internal
 
 input_pdfs/*.pdf
+input_pdfs/*.csv
+!input_pdfs/.gitkeep
+
+input_invoices/*
 !input_pdfs/.gitkeep
 
 output_reports/*.xlsx
